@@ -3,8 +3,121 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <iostream>
 #include <stdlib.h>
+#include <string.h>
 using namespace std;
 using namespace cv;
+
+#define THRESHHOLD_ERROR 1.5
+#define LINE_SEG_ERROR 20
+#define GROUP_SEG_ERROR 6
+
+//#define SHOW_STEPS
+
+vector<Rect> lineBoundingBoxes;
+vector<vector<Rect>> groupBoundingBoxes(20);
+vector<vector<Rect>> noteBoundingBoxes(20);
+
+/**automized binarization*/
+vector<int> calculateHistogram(Mat img) {
+
+
+	vector<int> histo(256, 0);
+
+	for (int i = 0; i < img.rows; i++) {
+		for (int j = 0; j < img.cols; j++) {
+			histo[img.at<uchar>(i, j)] ++;
+		}
+	}
+	return histo;
+}
+int maxHistoValue(vector<int> histo) {
+
+	int max = 0;
+	for (int i = 0; i < histo.size(); i++)
+		if (histo[i] >= max) max = histo[i];
+	return max;
+}
+Mat showHistogram(vector<int> histo, int histo_height, int hist_width) {
+
+	int maxHisto = maxHistoValue(histo);
+
+	Mat histoImage(histo_height + 20, hist_width, CV_8UC1, 128);
+
+	float scale = (float)histo_height / maxHisto;
+	int baseline = histo_height - 1 + 20;
+
+	for (int i = 0; i < 15; i++) {
+		for (int j = 0; j < hist_width; j++) {
+			histoImage.at<uchar>(i, j) = j;
+		}
+	}
+
+	for (int i = 0; i < histo.size(); i++) {
+		Point p1 = Point(i, baseline);
+		Point p2 = Point(i, baseline - cvRound(histo[i] * scale));
+		line(histoImage, p1, p2, 0);
+	}
+
+	return  histoImage;
+}
+uchar minHistogramIntensity(vector<int> histo) {
+	for (int i = 0; i < histo.size(); i++) {
+		if (histo[i] != 0)
+			return i;
+	}
+	return histo.size() - 1;
+}
+uchar maxHistogramIntensity(vector<int> histo) {
+	for (int i = histo.size() - 1; i >= 0; i--) {
+		if (histo[i] != 0)
+			return i;
+	}
+	return 0;
+}
+uchar findThresholdValue(Mat img, float ERROR) {
+	vector<int> histogram = calculateHistogram(img);
+
+	uchar Imax = maxHistogramIntensity(histogram);
+	uchar Imin = minHistogramIntensity(histogram);
+
+	float T, Tnew = 128.0;
+	float q1, q2, n, sum;
+	do {
+		T = Tnew;
+		sum = 0;
+		n = 0;
+		for (int i = Imin; i <= T; i++) {
+			sum += i * histogram[i];
+			n += histogram[i];
+		}
+		q1 = sum / n;
+
+		sum = 0;
+		n = 0;
+		for (int i = T + 1; i <= Imax; i++) {
+			sum += i * histogram[i];
+			n += histogram[i];
+		}
+		q2 = sum / n;
+
+		Tnew = (q1 + q2) / 2;
+
+	} while (abs(Tnew - T) < ERROR);
+	return Tnew;
+}
+Mat threshold(Mat img, const uchar TH) {
+	Mat binary(img.rows, img.cols, CV_8UC1);
+
+	for (int i = 0; i < img.rows; i++) {
+		for (int j = 0; j < img.cols; j++) {
+			if (img.at<uchar>(i, j) <= TH) binary.at<uchar>(i, j) = 0;
+			else binary.at<uchar>(i, j) = 255;
+		}
+	}
+	return binary;
+}
+
+
 
 vector<int> horizontalProjection(Mat img,const uchar pixelValue, const int amplifier) {
 	vector<int> horProj(img.rows, 0);
@@ -46,47 +159,111 @@ Mat viewProjection(vector<int> projection, const uchar type,const int hight,cons
 	}
 	return img;
 }
-Mat threshold(Mat img, const uchar TH) {
-	Mat binary(img.rows, img.cols, CV_8UC1);
+
+
+Mat createFinalBoundingBoxes(Mat img) {
+	Mat dst(img.rows, img.cols, CV_8UC3);
 
 	for (int i = 0; i < img.rows; i++) {
 		for (int j = 0; j < img.cols; j++) {
-			if (img.at<uchar>(i, j) <= TH) binary.at<uchar>(i, j) = 0;
-			else binary.at<uchar>(i, j) = 255;
+			dst.at<Vec3b>(i, j) = Vec3b(img.at<uchar>(i,j), img.at<uchar>(i, j), img.at<uchar>(i, j));
 		}
 	}
-	return binary;
+
+	for (int i = 0; i < lineBoundingBoxes.size();i++) {
+		Rect current = lineBoundingBoxes[i];
+		rectangle(dst, current, Vec3b(0, 255, 255), 2);
+	}
+
+	for (int i = 0; i < groupBoundingBoxes.size(); i++) {
+		for (int j = 0; j < groupBoundingBoxes[i].size(); j++) {
+			Rect current = groupBoundingBoxes[i][j];
+			rectangle(dst, current, Vec3b(255, 0, 255), 1);
+		}
+		
+	}
+	return dst;
 }
 
-vector<int> indentifyLinePositions(Mat img,const uchar ObjectColor,const uchar BackGroundColor) {
-	vector<int> lineRows;
+vector<Mat> _2MusicalSignsSegmentation(Mat img, vector<int> linePosition) {
+	vector<Mat> signs;
 
+	vector<int> verticalProj = verticalProjection(img, 0, 1);
+	#ifdef SHOW_STEPS
+		Mat vertical = viewProjection(verticalProj, 1, img.rows, img.cols);
+		imshow("Original Group", img);
+		imshow("Group projection", vertical);
+	#endif
+	
+	//note that between each possible note there is a line that at each point has constant number of black pixels
+	//also note that a group starts with a notes round head thingy
+
+	for (int i = 0; i < 10; i++) {
+		verticalProj.push_back(0);
+	}
+
+	//identify constant segments
+	for (int i = 0; i < verticalProj.size(); i++) {
+		cout << verticalProj[i] << " ";
+	}
+	cout << endl;
+
+	return signs;
+}
+vector<vector<Mat>> analizeAllGroups(vector<vector<Mat>> groups,int groupWidth) {
+	vector<vector<Mat>> notes(groups.size());
+
+	for (int i = 0; i < groups.size(); i++) {
+		for (int j = 0; j < groups[i].size(); j++) {
+			if (groups[i][j].cols <= groupWidth) {
+				notes[i].push_back(groups[i][j]);
+			}	
+			else {
+				vector<int> lines;
+				vector<Mat> newNotes = _2MusicalSignsSegmentation(groups[i][j],lines);
+				for (int k = 0; k < newNotes.size(); k++) {
+					notes[i].push_back(newNotes[k]);
+				}
+			}
+		}
+	}
+
+	return notes;
+}
+int findMedianGroupWidth(vector<vector<Mat>> groups) {
+	float median = 0;
+	int groupNumber = 0;
+	for (int i = 0; i < groups.size(); i++) {
+		for (int j = 0; j < groups[i].size(); j++) {
+			median += groups[i][j].cols;
+			groupNumber++;
+		}
+	}
+	return median / groupNumber;
+}
+vector<int> indentifyLinePositions(Mat img, const uchar ObjectColor, const uchar BackGroundColor) {
+
+	vector<int> lineRows;
 	for (int i = 0; i < img.rows; i++) {
 		if (img.at<uchar>(i, img.cols / 2) == ObjectColor)
 			lineRows.push_back(i);
 	}
 	if (lineRows.size() == 5) return lineRows;
+	
+	//reduce duplicates line elements -> lineRows[i] + 1 = lineRows[i]
+	lineRows.push_back(-1);
+
 	vector<int> newLineRows;
-	int countLines;
-	for (int i = 0,j; i < lineRows.size(); i++) {
-		if (lineRows[i] + 1 != lineRows[i + 1]) newLineRows.push_back(lineRows[i]);
-		else {
-			countLines = 0;
-			for (j = i + 1; j < lineRows.size() && lineRows[i] + 1 == lineRows[i + 1];) {
-				j++;
-				countLines += lineRows[j];
-			}
-			countLines /= (j - i);
-			newLineRows.push_back(countLines);
+	int n = lineRows.size();
+	n--;
+	for (int i = 0; i < n;i++) {
+		if ((lineRows[i] + 1) != lineRows[i + 1]) {
+			newLineRows.push_back(lineRows[i]);
 		}
 	}
 	return newLineRows;
 }
-vector<Mat> _2MusicalSignsSegmentation(Mat img) {
-	vector<Mat> signs;
-	return signs;
-}
-vector<int> removeHorizontalLines(Mat src, Mat dest) {
+vector<Mat> removeHorizontalLines(Mat src) {
 	Mat horizontal = src.clone();
 	Mat vertical = src.clone();
 
@@ -95,14 +272,18 @@ vector<int> removeHorizontalLines(Mat src, Mat dest) {
 	erode(horizontal, horizontal, horizontalStructure, Point(-1, -1));
 	dilate(horizontal, horizontal, horizontalStructure, Point(-1, -1));
 
-	vector<int> lineRows = indentifyLinePositions(horizontal, 255, 0);
-	imshow("horizontal", horizontal);
+	#ifdef SHOW_STEPS
+		imshow("horizontal", horizontal);
+	#endif
 
 	int verticalsize = vertical.rows / 15;
 	Mat verticalStructure = getStructuringElement(MORPH_RECT, Size(1, verticalsize));
 	erode(vertical, vertical, verticalStructure, Point(-1, -1));
 	dilate(vertical, vertical, verticalStructure, Point(-1, -1));
-	imshow("vertical", vertical);
+
+	#ifdef SHOW_STEPS
+		imshow("vertical", vertical);
+	#endif
 
 	bitwise_not(vertical, vertical);
 
@@ -112,21 +293,38 @@ vector<int> removeHorizontalLines(Mat src, Mat dest) {
 	Mat kernel = Mat::ones(2, 2, CV_8UC1);
 	dilate(edges, edges, kernel);
 
+	Mat dest;
 	vertical.copyTo(dest);
 
 	blur(dest, dest, Size(2, 2));
 
 	dest.copyTo(vertical, edges);
 
-	imshow("smooth", dest);
-	return lineRows;
+	#ifdef SHOW_STEPS
+		imshow("smooth", dest);
+	#endif
+
+	vector<Mat> images;
+	images.push_back(dest);
+	images.push_back(horizontal);
+	return images;
 }
-vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRows) {
+vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRows,int nrLine) {
 	Mat bw;
 	adaptiveThreshold(~img, bw, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 15, -2);
-	Mat imgRemLine;
+	vector<Mat> images = removeHorizontalLines(bw);
+	Mat imgRemLine = images[0];
+	Mat horizontal = images[1];
+	
+	lineRows = indentifyLinePositions(images[1], 255, 0);
+	#ifdef SHOW_STEPS
+		cout << "Line row local coordonates for line nr.: " << nrLine;
+		for (int i = 0; i < lineRows.size(); i++) {
+			cout << lineRows[i] << " ";
+		}
+		cout << endl;
+	#endif	
 
-	lineRows = removeHorizontalLines(bw, imgRemLine);
 	vector<int> verticalProj = verticalProjection(imgRemLine, 0, 1);
 
 	vector<Rect> whiteSpaces;
@@ -141,7 +339,6 @@ vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRo
 		else{
 			if (width >= TH_ERROR) {
 				Rect nr(start, 0, width, imgRemLine.rows);
-				//rectangle(imgRemLine, nr, 128, 1);
 				whiteSpaces.push_back(nr);
 			}
 			width = 0;
@@ -149,12 +346,13 @@ vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRo
 		if (i == verticalProj.size() - 1) {
 			if (width >= TH_ERROR && width <= (img.cols/4)) {
 				Rect nr(start, 0, width, imgRemLine.rows);
-				//rectangle(imgRemLine, nr, 128, 1);
 				whiteSpaces.push_back(nr);
 			}
 		}
 	}
 	vector<Mat> groups;
+	//extract lineBoundingBox
+	Rect lineBox = lineBoundingBoxes[nrLine];
 	for (int i = 0; i < whiteSpaces.size() - 1; i++) {
 		int newX = whiteSpaces[i].x + whiteSpaces[i].width-3;
 		int newY = whiteSpaces[i].y;
@@ -163,7 +361,12 @@ vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRo
 		
 		if (newWidth >=TH_ERROR) {
 			Rect noteRect(newX, newY, newWidth, newHeight);
-			Mat roi = img(noteRect);
+			#ifdef SHOW_STEPS
+				rectangle(imgRemLine, noteRect, 220, 1);
+			#endif
+			Mat roi = imgRemLine(noteRect);
+			Rect noteBox(newX, newY + lineBox.y, newWidth, newHeight);
+			groupBoundingBoxes[nrLine].push_back(noteBox);
 			groups.push_back(roi);
 		}
 	}
@@ -171,8 +374,9 @@ vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRo
 }
 vector<Mat> _2LinesSegmentation(Mat img,const int TH_ERROR) {
 	vector<int> horizontalProj = horizontalProjection(img, 0, 1);
-	Mat horProj = viewProjection(horizontalProj, 0, img.rows, img.cols);
-	//imshow("Horizontal projection", horProj);
+	//Mat horProj = viewProjection(horizontalProj, 0, img.rows, img.cols);
+
+	Mat rectanguled = img.clone();
 
 	vector<Mat> lines;
 	int start = 0, height = 0;
@@ -186,7 +390,10 @@ vector<Mat> _2LinesSegmentation(Mat img,const int TH_ERROR) {
 			if (height > 0) {
 				if (height >= TH_ERROR) {
 					Rect nr(0, start, img.cols, height);
-					//rectangle(img, nr, 128, 2);
+					lineBoundingBoxes.push_back(nr);
+					#ifdef SHOW_STEPS
+						rectangle(rectanguled, nr, 50, 2);
+					#endif
 					Mat roi = img(nr);
 					lines.push_back(roi);
 				}
@@ -194,32 +401,46 @@ vector<Mat> _2LinesSegmentation(Mat img,const int TH_ERROR) {
 			}
 		}
 	}
+	#ifdef SHOW_STEPS
+		imshow("Rectanguled", rectanguled);
+	#endif
 	return lines;
 }
+
 int main() {
-	Mat img = imread("musical_sheet/sheet1.jpg", 0);
+	Mat img = imread("musical_sheet/sheet7.jpg", 0);
 	imshow("Original image", img);
+
+	uchar threshhold = findThresholdValue(img, THRESHHOLD_ERROR);
+	cout << (int)threshhold << endl;
 	Mat binary = threshold(img, 200);
-	vector<Mat> lines = _2LinesSegmentation(binary,20);
-	
-	char lineName[20] = "ready/line0.bmp";
-	char groupName[30] = "ready/line0_group0.bmp";
-	vector<Mat> groups;
+
+
+	vector<Mat> lines = _2LinesSegmentation(binary,LINE_SEG_ERROR);
+	char lineName[30];
+	char groupName[30];
+	vector<vector<Mat>> groups(lines.size());
 	vector<vector<int>> imageLines(lines.size());
 
+	
 	for (int i = 0; i < lines.size(); i++) {
 		
-		groups = _2GroupsSegmentation(lines[i], 6,imageLines[i]);
-		lineName[10] = (char)(48 + i);
+		groups[i] = _2GroupsSegmentation(lines[i], GROUP_SEG_ERROR, imageLines[i],i);
+		sprintf(lineName, "%s%d%s", "ready/line", i, ".bmp");
 		imwrite(lineName, lines[i]);
 
-		groupName[10] = (char)(48 + i);
-		for (int j = 0; j < groups.size(); j++) {
-			groupName[17] = (char)(48 + j);
-			imwrite(groupName, groups[j]);
+		for (int j = 0; j < groups[i].size(); j++) {
+			sprintf(groupName, "%s%d%s%d%s", "ready/line", i, "_group",j,".bmp");
+			imwrite(groupName, groups[i][j]);
 		}
-		groups.clear();
 	}
+
+	int groupWidth = findMedianGroupWidth(groups);
+	vector<vector<Mat>> notes = analizeAllGroups(groups, groupWidth);
+
+
+	Mat dst = createFinalBoundingBoxes(img);
+	imshow("Final Image", dst);
 	cout << "end" << endl;
 	waitKey(0);
 	return 0;
