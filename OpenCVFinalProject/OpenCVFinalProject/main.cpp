@@ -11,6 +11,35 @@ using namespace cv;
 #define LINE_SEG_ERROR 20
 #define GROUP_SEG_ERROR 6
 
+//defined musical note types
+#define WHOLE_NOTE 0
+#define HALF_NOTE 1
+#define QUARTER_NOTE 2
+#define EIGHTH_NOTE 3
+#define SIXTEENTH_NOTE 4
+
+//defines musical note names - lower and upper can be added to extend the range
+#define C 0 //DO -- on -1st staff line
+#define D 1 //RE -- between -1 and 0 staff line
+#define E 2 //MI -- on 0th staff line
+#define F 3 //FA -- between 0 and 1 staff line
+#define G 4 //SOL -- on 1st staff line
+#define A 5 //LA -- between 1 and 2 staff line
+#define B 6 //TI -- on 2nd staff line
+
+#define musical note specifiers
+#define LOWER 0
+#define NORMAL 1
+#define UPPER 2
+
+typedef struct Notes {
+	int speficier;
+	int name;
+	int type;
+	Mat img;
+	Rect boundingBox;
+}Note;
+
 //#define SHOW_STEPS
 
 vector<Rect> lineBoundingBoxes;
@@ -161,7 +190,43 @@ Mat viewProjection(vector<int> projection, const uchar type,const int hight,cons
 }
 
 
-Mat createFinalBoundingBoxes(Mat img) {
+void displayMusicalNote(Note note) {
+	switch (note.speficier) {
+	case LOWER:
+		cout << "LOWER ";
+		break;
+	case NORMAL:
+		break;
+	case UPPER:
+		cout << "UPPER ";
+		break;
+	}
+
+	switch (note.name) {
+	case C:
+		cout << "C(DO) ";
+		break;
+	case D:
+		cout << "D(RE) ";
+		break;
+	case E:
+		cout << "E(MI) ";
+		break;
+	case F:
+		cout << "F(FA) ";
+		break;
+	case G:
+		cout << "G(SOL) ";
+		break;
+	case A:
+		cout << "A(LA) ";
+		break;
+	case B:
+		cout << "B(TI) ";
+		break;
+	}
+}
+Mat createFinalBoundingBoxes(Mat img,vector<vector<Note>> musicalNotes) {
 	Mat dst(img.rows, img.cols, CV_8UC3);
 
 	for (int i = 0; i < img.rows; i++) {
@@ -180,12 +245,151 @@ Mat createFinalBoundingBoxes(Mat img) {
 			Rect current = groupBoundingBoxes[i][j];
 			rectangle(dst, current, Vec3b(255, 0, 255), 1);
 		}
-		
+	}
+
+	for (int i = 0; i < musicalNotes.size(); i++) {
+		for (int j = 0; j < musicalNotes[i].size(); j++) {
+			int StartRow = musicalNotes[i][j].boundingBox.y;
+			int StartCol = musicalNotes[i][j].boundingBox.x;
+
+			for (int r = 0; r < musicalNotes[i][j].img.rows; r++) {
+				for (int c = 0; c < musicalNotes[i][j].img.cols; c++) {
+					if (musicalNotes[i][j].img.at<Vec3b>(r, c) != Vec3b(255, 255, 255))
+						dst.at<Vec3b>(StartRow + r, StartCol + c) = musicalNotes[i][j].img.at<Vec3b>(r, c);
+				}
+			}
+		}
 	}
 	return dst;
 }
+bool isBetween(int x,int min, int max) {
+	if (x > min && x < max)
+		return true;
+	return false;
+}
+bool isAround(int centerCoord, int lineCoord, int TH_ERROR) {
 
-vector<Mat> _2MusicalSignsSegmentation(Mat img, vector<int> linePosition) {
+	for (int i = -TH_ERROR; i <= TH_ERROR; i++) {
+		if (centerCoord == (lineCoord + i))
+			return true;
+	}
+	return false;
+}
+Note recognizeMusicalNote(Mat originalNote, vector<int> lineCoordonates,int TH_ERROR) {
+
+	vector<int> horizontalProj = horizontalProjection(originalNote, 0, 1);
+
+	// find witch row has the most black pixels --> that will be the center row of the musical note
+	int max = 0;
+
+	for (int i = 0; i < horizontalProj.size(); i++) {
+		if (horizontalProj[i] >= horizontalProj[max]) max = i;
+	}
+
+	Note musicalNote;
+
+	int betweenLineDistance = abs(lineCoordonates[0] - lineCoordonates[1]);
+	int firstSuppertLineCoord = lineCoordonates[lineCoordonates.size() - 1] + betweenLineDistance;
+
+	//check if musical note found on this image in lower, normal or upper category
+	//first line is -1 line in normal musical note range
+	musicalNote.name = 404;
+	if (max >= lineCoordonates[2] && max <= firstSuppertLineCoord){
+		musicalNote.speficier = NORMAL;
+
+		if (isAround(max, firstSuppertLineCoord, TH_ERROR))
+			musicalNote.name = C;
+		else if (isBetween(max,lineCoordonates[4],firstSuppertLineCoord))
+			musicalNote.name = D;
+		else if (isAround(max, lineCoordonates[4], TH_ERROR))
+			musicalNote.name = E;
+		else if (isBetween(max, lineCoordonates[3], lineCoordonates[4]))
+			musicalNote.name = F;
+		else if (isAround(max, lineCoordonates[3], TH_ERROR))
+			musicalNote.name = G;
+		else if (isBetween(max, lineCoordonates[2], lineCoordonates[3]))
+			musicalNote.name = A;
+		else if (isAround(max, lineCoordonates[2], TH_ERROR))
+			musicalNote.name = B;
+	}
+	else if (max < lineCoordonates[2]){
+		musicalNote.speficier = UPPER;
+
+		if (isBetween(max, lineCoordonates[1], lineCoordonates[2]))
+			musicalNote.name = C;
+		else if (isAround(max, lineCoordonates[1], TH_ERROR))
+			musicalNote.name = D;
+		else if (isBetween(max, lineCoordonates[0], lineCoordonates[1]))
+			musicalNote.name = E;
+		else if (isAround(max, lineCoordonates[0], TH_ERROR))
+			musicalNote.name = F;
+		else if (isBetween(max, lineCoordonates[0] - betweenLineDistance, lineCoordonates[0]))
+			musicalNote.name = G;
+		else if (isAround(max, lineCoordonates[0] - betweenLineDistance, TH_ERROR))
+			musicalNote.name = A;
+		else if(isBetween(max, lineCoordonates[0] - 2 * betweenLineDistance, lineCoordonates[0] - betweenLineDistance))
+			musicalNote.name = B;
+	}
+	else {
+		musicalNote.speficier = LOWER;
+
+		if (isBetween(max,firstSuppertLineCoord, firstSuppertLineCoord + betweenLineDistance))
+			musicalNote.name = B;
+		else if (isAround(max, firstSuppertLineCoord + betweenLineDistance, TH_ERROR))
+			musicalNote.name = A;
+		else if (isBetween(max, firstSuppertLineCoord + betweenLineDistance, firstSuppertLineCoord + 2 * betweenLineDistance))
+			musicalNote.name = G;
+		else if (isAround(max, firstSuppertLineCoord + 2 * betweenLineDistance, TH_ERROR))
+			musicalNote.name = F;
+		else if (isBetween(max, firstSuppertLineCoord + 2 * betweenLineDistance, firstSuppertLineCoord + 3 * betweenLineDistance))
+			musicalNote.name = E;
+		else if (isAround(max, firstSuppertLineCoord + 3 * betweenLineDistance, TH_ERROR))
+			musicalNote.name = D;
+		else if(isBetween(max, firstSuppertLineCoord + 3 * betweenLineDistance, firstSuppertLineCoord + 4 * betweenLineDistance))
+			musicalNote.name = C;
+	}
+	if (musicalNote.name == 404)
+		musicalNote.speficier = 404;
+	
+	//after knowing the musical note type we can colorize the musical note accordingly
+	Mat colored(originalNote.rows, originalNote.cols, CV_8UC3);
+
+	for (int i = 0; i < originalNote.rows; i++) {
+		for (int j = 0; j < originalNote.cols; j++) {
+			//color the musical note
+			colored.at<Vec3b>(i, j) = Vec3b(255,255,255);
+			if (originalNote.at<uchar>(i, j) == 0) {
+				switch (musicalNote.name) {
+				case C:
+					colored.at<Vec3b>(i, j) = Vec3b(0,120,255);//orange
+					break;
+				case D:
+					colored.at<Vec3b>(i, j) = Vec3b(24,173,210);//mustard
+					break;
+				case E:
+					colored.at<Vec3b>(i, j) = Vec3b(13,109,55);//dark green
+					break;
+				case F:
+					colored.at<Vec3b>(i, j) = Vec3b(163,205,41);//turkisz zold
+					break;
+				case G:
+					colored.at<Vec3b>(i, j) = Vec3b(205,133,41);//a nice blue
+					break;
+				case A:
+					colored.at<Vec3b>(i, j) = Vec3b(205,41,88);//violate
+					break;
+				case B:
+					colored.at<Vec3b>(i, j) = Vec3b(229,84,218);//pink
+					break;
+				}
+			}
+		}
+	}
+	musicalNote.img = colored;
+	return musicalNote;
+}
+
+vector<Mat> _2MusicalSignsSegmentation(Mat img) {
 	vector<Mat> signs;
 
 	vector<int> verticalProj = verticalProjection(img, 0, 1);
@@ -202,25 +406,19 @@ vector<Mat> _2MusicalSignsSegmentation(Mat img, vector<int> linePosition) {
 		verticalProj.push_back(0);
 	}
 
-	//identify constant segments
-	for (int i = 0; i < verticalProj.size(); i++) {
-		cout << verticalProj[i] << " ";
-	}
-	cout << endl;
-
 	return signs;
 }
 vector<vector<Mat>> analizeAllGroups(vector<vector<Mat>> groups,int groupWidth) {
 	vector<vector<Mat>> notes(groups.size());
-
+	
 	for (int i = 0; i < groups.size(); i++) {
 		for (int j = 0; j < groups[i].size(); j++) {
 			if (groups[i][j].cols <= groupWidth) {
 				notes[i].push_back(groups[i][j]);
+				noteBoundingBoxes[i].push_back(groupBoundingBoxes[i][j]);
 			}	
 			else {
-				vector<int> lines;
-				vector<Mat> newNotes = _2MusicalSignsSegmentation(groups[i][j],lines);
+				vector<Mat> newNotes = _2MusicalSignsSegmentation(groups[i][j]);
 				for (int k = 0; k < newNotes.size(); k++) {
 					notes[i].push_back(newNotes[k]);
 				}
@@ -309,7 +507,7 @@ vector<Mat> removeHorizontalLines(Mat src) {
 	images.push_back(horizontal);
 	return images;
 }
-vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> lineRows,int nrLine) {
+vector<Mat> _2GroupsSegmentation(Mat img, const int TH_ERROR, vector<int> &lineRows,int nrLine) {
 	Mat bw;
 	adaptiveThreshold(~img, bw, 255, ADAPTIVE_THRESH_MEAN_C, THRESH_BINARY, 15, -2);
 	vector<Mat> images = removeHorizontalLines(bw);
@@ -408,7 +606,7 @@ vector<Mat> _2LinesSegmentation(Mat img,const int TH_ERROR) {
 }
 
 int main() {
-	Mat img = imread("musical_sheet/sheet7.jpg", 0);
+	Mat img = imread("musical_sheet/sheet1.jpg", 0);
 	imshow("Original image", img);
 
 	uchar threshhold = findThresholdValue(img, THRESHHOLD_ERROR);
@@ -438,8 +636,20 @@ int main() {
 	int groupWidth = findMedianGroupWidth(groups);
 	vector<vector<Mat>> notes = analizeAllGroups(groups, groupWidth);
 
+	vector<vector<Note>> musicalNotes(notes.size());
 
-	Mat dst = createFinalBoundingBoxes(img);
+	for (int i = 0; i < notes.size(); i++) {
+		for (int j = 0; j < notes[i].size(); j++) {
+			Note note = recognizeMusicalNote(notes[i][j], imageLines[i], 2);
+			note.boundingBox = noteBoundingBoxes[i][j];
+
+			displayMusicalNote(note);
+			musicalNotes[i].push_back(note);
+		}
+		cout << endl;
+	}
+
+	Mat dst = createFinalBoundingBoxes(img,musicalNotes);
 	imshow("Final Image", dst);
 	cout << "end" << endl;
 	waitKey(0);

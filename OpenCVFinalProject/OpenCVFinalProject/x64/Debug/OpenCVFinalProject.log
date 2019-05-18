@@ -1,8 +1,8 @@
 ﻿  main.cpp
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(68): warning C4267: 'return': conversion from 'size_t' to 'uchar', possible loss of data
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(71): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(97): warning C4244: 'initializing': conversion from 'float' to 'int', possible loss of data
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(106): warning C4244: 'return': conversion from 'float' to 'uchar', possible loss of data
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(242): warning C4244: 'return': conversion from 'float' to 'int', possible loss of data
-c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(257): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(97): warning C4267: 'return': conversion from 'size_t' to 'uchar', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(100): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(126): warning C4244: 'initializing': conversion from 'float' to 'int', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(135): warning C4244: 'return': conversion from 'float' to 'uchar', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(440): warning C4244: 'return': conversion from 'float' to 'int', possible loss of data
+c:\users\jakab\source\repos\imageprocessingproject\opencvfinalproject\opencvfinalproject\main.cpp(455): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
   OpenCVFinalProject.vcxproj -> C:\Users\jakab\source\repos\imageProcessingProject\OpenCVFinalProject\x64\Debug\OpenCVFinalProject.exe
