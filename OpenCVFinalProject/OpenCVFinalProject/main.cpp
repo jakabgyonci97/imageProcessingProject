@@ -389,7 +389,28 @@ Note recognizeMusicalNote(Mat originalNote, vector<int> lineCoordonates,int TH_E
 	return musicalNote;
 }
 
+vector<int> findLocalMaximums(vector<int> fdp) {
+	vector<int> maximeLoc;
+	uchar WH = 5;
+	float TH = 10;
+
+	for (int k = 0 + WH; k < fdp.size() - 1 - WH; k++) {
+
+		float values = 0;
+		float max = fdp[k - WH];
+		for (int j = k - WH; j <= k + WH; j++) {
+			values += fdp[j];
+			if (max <= fdp[j])max = fdp[j];
+		}
+		float media = values / (2 * WH + 1);
+		if ((fdp[k] > (media + TH)) && fdp[k] >= max)
+			maximeLoc.push_back(k);
+	}
+
+	return maximeLoc;
+}
 vector<Mat> _2MusicalSignsSegmentation(Mat img) {
+	cout << "You are in group to musical sign segmentation section" << endl;
 	vector<Mat> signs;
 
 	vector<int> verticalProj = verticalProjection(img, 0, 1);
@@ -399,11 +420,34 @@ vector<Mat> _2MusicalSignsSegmentation(Mat img) {
 		imshow("Group projection", vertical);
 	#endif
 	
-	//note that between each possible note there is a line that at each point has constant number of black pixels
-	//also note that a group starts with a notes round head thingy
+	//now we need to eliminate the constant segments
+	//constant ranges are between local maximums - find local maximums -> nr maximums = nr. musical notes
+	vector<int> localMaximums = findLocalMaximums(verticalProj);
+	//maximums are the middle of the musical note
 
-	for (int i = 0; i < 10; i++) {
-		verticalProj.push_back(0);
+	if (localMaximums.empty()) return signs;
+
+	//find the musical notes radious
+	int radious = 1;
+	int n = verticalProj.size(); n--;
+	
+	for (int i = localMaximums[0]; i < n; i++) {
+		cout << "fuck" << endl;
+		if((verticalProj[i] + 1) != verticalProj[i + 1])
+			radious = i - localMaximums[0];
+	}
+	
+
+	//extarct images of musical notes
+	for (int i = 0; i < localMaximums.size(); i++) {
+		Mat musicalNote(img.rows, radious * 2 + 1, CV_8UC1);
+		for (int r = 0; r < img.rows; r++) {
+			for (int c = (localMaximums[i] - radious); c < (localMaximums[i] + radious); c++) {
+				if((c - localMaximums[i] - radious) >= 0 && (c - localMaximums[i] - radious) < img.cols)
+					musicalNote.at<uchar>(r, c - (localMaximums[i] - radious)) = img.at<uchar>(r, c);
+			}
+		}
+		signs.push_back(musicalNote);
 	}
 
 	return signs;
@@ -419,8 +463,10 @@ vector<vector<Mat>> analizeAllGroups(vector<vector<Mat>> groups,int groupWidth) 
 			}	
 			else {
 				vector<Mat> newNotes = _2MusicalSignsSegmentation(groups[i][j]);
-				for (int k = 0; k < newNotes.size(); k++) {
-					notes[i].push_back(newNotes[k]);
+				if (!newNotes.empty()) {
+					for (int k = 0; k < newNotes.size(); k++) {
+						//notes[i].push_back(newNotes[k]);
+					}
 				}
 			}
 		}
